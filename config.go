@@ -202,6 +202,8 @@ type Config struct {
 			// If enabled, messages that failed to deliver will be returned on the
 			// Errors channel, including error (default enabled).
 			Errors bool
+
+			Warnings bool
 		}
 
 		// The following config options control how often messages are batched up and

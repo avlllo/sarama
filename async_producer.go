@@ -48,6 +48,7 @@ type AsyncProducer interface {
 	// you can set Producer.Return.Errors in your config to false, which prevents
 	// errors to be returned.
 	Errors() <-chan *ProducerError
+	Warnings() <-chan *ProducerError
 }
 
 // transactionManager keeps the state necessary to ensure idempotent production
@@ -113,7 +114,7 @@ type asyncProducer struct {
 	client Client
 	conf   *Config
 
-	errors                    chan *ProducerError
+	errors, warnings          chan *ProducerError
 	input, successes, retries chan *ProducerMessage
 	inFlight                  sync.WaitGroup
 
@@ -157,6 +158,7 @@ func newAsyncProducer(client Client) (AsyncProducer, error) {
 		client:     client,
 		conf:       client.Config(),
 		errors:     make(chan *ProducerError),
+		warnings:   make(chan *ProducerError),
 		input:      make(chan *ProducerMessage),
 		successes:  make(chan *ProducerMessage),
 		retries:    make(chan *ProducerMessage),
@@ -285,6 +287,10 @@ func (pe ProducerErrors) Error() string {
 
 func (p *asyncProducer) Errors() <-chan *ProducerError {
 	return p.errors
+}
+
+func (p *asyncProducer) Warnings() <-chan *ProducerError {
+	return p.warnings
 }
 
 func (p *asyncProducer) Successes() <-chan *ProducerMessage {
@@ -705,20 +711,29 @@ func (p *asyncProducer) newBrokerProducer(broker *Broker) *brokerProducer {
 			// Capture the current set to forward in the callback
 			sendResponse := func(set *produceSet) ProduceCallback {
 				return func(response *ProduceResponse, err error) {
+					defer wg.Done()
 					// Forward the response to make sure we do not block the responseReceiver
 					pending <- &brokerProducerResponse{
 						set: set,
 						err: err,
 						res: response,
 					}
-					if response.ThrottleTime > 0 {
-						Logger.Printf("testproducer/broker/%d/%d throttled for %dms\n", broker.ID(), broker.Addr(), response.ThrottleTime)
-						err := &ProducerError{
-							Err: ErrThrottled{response.ThrottleTime},
-						}
-						p.errors <- err
+					if response.ThrottleTime == 0 {
+						return
 					}
-					wg.Done()
+					Logger.Printf("producer/broker/%d/%d throttled for %dms\n", broker.ID(), broker.Addr(), response.ThrottleTime)
+					if !p.conf.Producer.Return.Warnings {
+						return
+					}
+					set.eachPartition(func(topic string, partition int32, pSet *partitionSet) {
+						for _, msg := range pSet.msgs {
+							err := &ProducerError{
+								Msg: msg,
+								Err: ErrThrottled{response.ThrottleTime},
+							}
+							p.warnings <- err
+						}
+					})
 				}
 			}(set)
 
@@ -1141,6 +1156,7 @@ func (p *asyncProducer) shutdown() {
 	close(p.retries)
 	close(p.errors)
 	close(p.successes)
+	close(p.warnings)
 }
 
 func (p *asyncProducer) bumpIdempotentProducerEpoch() {
