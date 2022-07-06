@@ -711,6 +711,13 @@ func (p *asyncProducer) newBrokerProducer(broker *Broker) *brokerProducer {
 						err: err,
 						res: response,
 					}
+					if response.ThrottleTime > 0 {
+						Logger.Printf("testproducer/broker/%d/%d throttled for %dms\n", broker.ID(), broker.Addr(), response.ThrottleTime)
+						err := &ProducerError{
+							Err: ErrThrottled{response.ThrottleTime},
+						}
+						p.errors <- err
+					}
 					wg.Done()
 				}
 			}(set)

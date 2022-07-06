@@ -3,9 +3,9 @@ package sarama
 import (
 	"errors"
 	"fmt"
-	"strings"
-
 	"github.com/hashicorp/go-multierror"
+	"strings"
+	"time"
 )
 
 // ErrOutOfBrokers is the error returned when the client has run out of brokers to talk to because all of them errored
@@ -66,6 +66,15 @@ var ErrDeleteRecords = errors.New("kafka server: failed to delete records")
 
 // ErrCreateACLs is the type of error returned when ACL creation failed
 var ErrCreateACLs = errors.New("kafka server: failed to create one or more ACL rules")
+
+// ErrThrottled is returned when a client is throttled by the server.
+type ErrThrottled struct {
+	ThrottleTime time.Duration
+}
+
+func (err ErrThrottled) Error() string {
+	return fmt.Sprintf("kafka: throttled: %s", err.ThrottleTime)
+}
 
 // MultiErrorFormat specifies the formatter applied to format multierrors. The
 // default implementation is a consensed version of the hashicorp/go-multierror
