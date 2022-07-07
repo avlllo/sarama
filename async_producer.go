@@ -714,15 +714,6 @@ func (p *asyncProducer) newBrokerProducer(broker *Broker) *brokerProducer {
 						err: err,
 						res: response,
 					}
-					if response.ThrottleTime == 0 {
-						return
-					}
-					DebugLogger.Printf("producer/broker/%d/%d throttled for %dms\n", broker.ID(), broker.Addr(), response.ThrottleTime)
-					set.eachPartition(func(topic string, partition int32, pSet *partitionSet) {
-						for _, msg := range pSet.msgs {
-							msg.ThrottleTime = response.ThrottleTime
-						}
-					})
 				}
 			}(set)
 
@@ -968,7 +959,14 @@ func (bp *brokerProducer) handleSuccess(sent *produceSet, response *ProduceRespo
 	// we iterate through the blocks in the request set, not the response, so that we notice
 	// if the response is missing a block completely
 	var retryTopics []string
+
+	if response.ThrottleTime > 0 {
+		DebugLogger.Printf("producer/broker/%d/%d throttled for %dms\n", bp.broker.ID(), bp.broker.Addr(), response.ThrottleTime)
+	}
 	sent.eachPartition(func(topic string, partition int32, pSet *partitionSet) {
+		for _, msg := range pSet.msgs {
+			msg.ThrottleTime = response.ThrottleTime
+		}
 		if response == nil {
 			// this only happens when RequiredAcks is NoResponse, so we have to assume success
 			bp.parent.returnSuccesses(pSet.msgs)
